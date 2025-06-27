@@ -1,4 +1,14 @@
 rules:
+
+# 第零優先級：白名单
+- action: skip
+  expression: (http.user_agent contains "Surge")
+  name: White List
+  products:
+  - waf
+  - bic
+  - rateLimit
+
 # 第一優先級：阻擋已知惡意 ASN（最具體，基於 IP）
 - action: block
   expression: (ip.geoip.asnum in {197695 49505 201776 202425 49392 44812 202422 49981
