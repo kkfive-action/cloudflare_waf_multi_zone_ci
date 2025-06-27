@@ -279,8 +279,8 @@ def update_rules_yaml(asns):
             "action": "block",
             "expression": f"(ip.geoip.asnum in {{{' '.join(map(str, asns))}}})"
         }
-        data["rules"].append(rule_block)
-        print(f"Added ASN blocking rule with {len(asns)} ASNs")
+        data["rules"].insert(0, rule_block)
+        print(f"Added ASN blocking rule with {len(asns)} ASNs at highest priority")
     else:
         print("No ASN data available, skipping ASN rule creation")
 

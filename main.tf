@@ -29,13 +29,14 @@ resource "cloudflare_ruleset" "waf_ruleset" {
   }
 
   dynamic "rules" {
-    for_each = local.config.rules
+    for_each = { for idx, rule in local.config.rules : idx => rule }
     content {
       action      = rules.value.action
       description = rules.value.name
       expression  = rules.value.expression
       enabled     = true
-
+      ref         = tostring(rules.key)
+      
       dynamic "action_parameters" {
         for_each = contains(["skip"], rules.value.action) ? [1] : []
         content {
