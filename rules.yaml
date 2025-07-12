@@ -23,5 +23,5 @@ rules:
 
 # 第四優先級：挑戰海外流量（兜底策略）
 - action: managed_challenge
-  expression: not ip.geoip.country in {"CN" "HK" "TW" "MO"}
+  expression: not (http.user_agent contains "Surge" or http.user_agent contains "Loon" or http.user_agent contains "Quantumult" or http.user_agent contains "Stash") and not (ip.geoip.country in {"CN" "HK" "TW"})
   name: Challenge Overseas Traffic
