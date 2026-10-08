@@ -5,5 +5,5 @@
 # 一把 token 只能管它所屬「帳號」底下的 zone——別把別帳號的 zone 放進來，否則那條 apply 會 403。
 zone_ids = {
   "kkfive.top" = "e92ffaa10c4b84f3a7b5dba51d574a21"
-  "020830.xyz" = "21b28e6bde06669574ddfc82b93ab0ca"
+  "xiaokang.me" = "cce74c2aa0bfc47da7b991f63a35ab82"
 }

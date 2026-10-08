@@ -5,7 +5,7 @@ rules:
 # （203.0.113.x 是 RFC5737 範例網段，記得換掉。）
 - action: skip
   name: Allow Trusted Infrastructure
-  expression: (ip.src in {203.0.113.10 203.0.113.11})
+  expression: (ip.src in $trusted_infrastructure)
   skip_current_ruleset: true
   products:
   - waf
@@ -20,9 +20,7 @@ rules:
 # 就地重寫（從 AbuseIPDB / 靜態清單），所以這裡放幾個示意值即可。
 - action: block
   name: Block Known Bad ASNs (AbuseIPDB)
-  expression: (ip.geoip.asnum in {197695 49505 201776 202425 49392 44812 202422 49981
-    60068 44901 51167 200000 208091 202448 63949 16276 24940 45090 37963 20473 14061
-    9009 35913 31034 8100 46844 40676 53667 209605 212238 29802 48693})
+  expression: (ip.geoip.asnum in {16276 24940 14061 9009})
 
 # 第二優先：放行常見合法服務（只跳過受管產品，後面的 custom block 仍會評估）。
 - action: skip
@@ -42,5 +40,5 @@ rules:
 # 注意：別用「挑戰所有海外流量」那種寫法——對 SPA + API 的站，managed challenge 會卡死
 # 前端的 XHR / preflight，等於把海外用戶整個擋掉。用 threat_score 比較安全。
 - action: managed_challenge
-  expression: not (http.user_agent contains "Surge" or http.user_agent contains "Loon" or http.user_agent contains "Quantumult" or http.user_agent contains "Stash") and not (ip.geoip.country in {"CN" "HK" "TW"})
-  name: Challenge Overseas Traffic
+  expression: (cf.threat_score gt 10)
+  name: Challenge High Threat Score Traffic
