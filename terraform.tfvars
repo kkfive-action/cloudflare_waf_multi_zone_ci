@@ -1,7 +1,9 @@
-# cloudflare_api_token 通過環境變數 TF_VAR_cloudflare_api_token 從 GitHub Secrets 傳入
-# 不要在此文件中設置 API token，以提高安全性
+# cloudflare_api_token 走環境變數 TF_VAR_cloudflare_api_token（從 GitHub Secrets 進來）
+# 不要把 token 寫在這個檔案裡。
 
+# 填你自己的 zone（域名 = zone id）。zone id 在 CF dashboard 該網域 Overview 右下角。
+# 一把 token 只能管它所屬「帳號」底下的 zone——別把別帳號的 zone 放進來，否則那條 apply 會 403。
 zone_ids = {
   "kkfive.top" = "e92ffaa10c4b84f3a7b5dba51d574a21"
-  "020830.xyz"   = "21b28e6bde06669574ddfc82b93ab0ca"
+  "020830.xyz" = "21b28e6bde06669574ddfc82b93ab0ca"
 }
