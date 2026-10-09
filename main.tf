@@ -73,7 +73,9 @@ resource "cloudflare_ruleset" "rate_limit" {
     enabled    = true
 
     ratelimit = {
-      characteristics     = ["ip.src"]
+      # cf.colo.id 必須顯式帶上：CF 計數在 colo 層面處理，僅 ip.src 會被 API
+      # 拒絕（code 20155）；控制台的 "IP" 選項底層就是 ip.src + cf.colo.id
+      characteristics     = ["ip.src", "cf.colo.id"]
       period              = 10
       requests_per_period = 200
       mitigation_timeout  = 600
