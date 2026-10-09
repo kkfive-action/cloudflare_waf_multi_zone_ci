@@ -347,7 +347,7 @@ def inject_secret_path():
         data = _yaml.load(f)
 
     for rule in data["rules"]:
-        if rule.get("name") == "Block Scanners, Exploit Probes & Secret Host Guard":
+        if rule.get("name") == "Block Non-GET Methods on Secret Config Host":
             expr = rule.get("expression", "")
             if "${SECRET_PATH_PREFIX}" in expr:
                 rule["expression"] = expr.replace("${SECRET_PATH_PREFIX}", SECRET_PATH_PREFIX)

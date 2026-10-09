@@ -40,12 +40,13 @@ zone_ids = {
 
 ## 改規則
 
-全部在 `rules.yaml`，由上到下就是優先順序。預設四條（免費版 5 條額度還留 1 條備用）：
+全部在 `rules.yaml`，由上到下就是優先順序。預設五條：
 
 1. **Allow Trusted & Legitimate Traffic** — 合併 skip：自家基礎設施 IP（帳戶級 list `$trusted_infrastructure`）+ 合法服務（搜索引擎 UA + ASN 雙重驗證：Googlebot 15169/396982、Bingbot 8075；社交預覽 bot 按 UA）。**UA 單獨不作為信任依據。** 免費帳戶只有 1 個 IP-only list 額度；如需監控專用域名（如 `status.example.com`），直接在這條規則的 expression 內聯 `or (http.host eq "status.example.com")`（不佔 list 額度）。該 list 是外部依賴（不受 Terraform 管理）——改名或刪除會讓 CI 的 apply 失敗。
 2. **Block Known Bad ASNs** — 壞 ASN 黑名單（expression 每次跑被腳本重寫，手改沒用）。
-3. **Block Scanners, Exploit Probes & Secret Host Guard** — 防掃描合併規則：`8cawecg8gu.kkfive.top` 防護（非 GET/HEAD 403；GET/HEAD 但路徑不含秘密前綴也 403，秘密值來自 `SECRET_PATH_PREFIX` GitHub Secret，CI 運行時注入佔位符）+ 掃描/監控 UA + 漏洞路徑 + 死技術棧後綴（.php/.asp/.jsp 等）+ 危險 HTTP 方法 + VCS 目錄 + Vite dev 指紋 + 框架調試端點 + 密鑰文件 + 路徑穿越編碼。
-4. **Challenge High Threat Score Traffic** — 高威脅分數丟 managed challenge（為 API 服務保留）。
+3. **Block Non-GET Methods on Secret Config Host** — 僅 `8cawecg8gu.kkfive.top`：非 GET/HEAD 方法 403；GET/HEAD 但路徑不含秘密前綴也 403。秘密值來自 `SECRET_PATH_PREFIX` GitHub Secret（rules.yaml 裡是佔位符，CI 運行時注入）。
+4. **Block Malicious Traffic & Exploit Probes** — 掃描/監控 UA、漏洞路徑、死技術棧後綴（.php/.asp/.jsp 等）、危險 HTTP 方法、VCS 目錄、Vite dev 指紋、框架調試端點、密鑰文件、路徑穿越編碼。
+5. **Challenge High Threat Score Traffic** — 高威脅分數丟 managed challenge（為 API 服務保留）。
 
 `skip` 規則可以加 `skip_current_ruleset: true`（跳過後面所有 custom rules）跟 `products`（跳過哪些受管產品）。
 

@@ -41,12 +41,13 @@ zone_ids = {
 
 ## Editing rules
 
-Everything lives in `rules.yaml`; top-to-bottom is the priority order. Four rules by default (one free-tier slot left spare):
+Everything lives in `rules.yaml`; top-to-bottom is the priority order. Five rules by default:
 
 1. **Allow Trusted & Legitimate Traffic** — merged skip: your infrastructure IPs (account-level list `$trusted_infrastructure`) + legitimate services (search engines verified by UA **and** ASN: Googlebot 15169/396982, Bingbot 8075; social preview bots by UA). **UA alone is never a trust signal.** Free accounts get exactly one list and it's IP-only. The list is an external dependency (not managed by Terraform) — renaming or deleting it breaks the CI apply.
 2. **Block Known Bad ASNs** — bad-ASN blocklist (expression rewritten by the script on every run, so editing it by hand is pointless).
-3. **Block Scanners, Exploit Probes & Secret Host Guard** — merged anti-scan rule: `8cawecg8gu.kkfive.top` guard (non-GET/HEAD 403; GET/HEAD without the secret path prefix also 403, secret from the `SECRET_PATH_PREFIX` GitHub Secret, placeholder injected at CI time) + scanner/monitoring UAs + exploit paths + dead-stack suffixes (.php/.asp/.jsp/...) + dangerous HTTP methods + VCS dirs + Vite dev fingerprints + framework debug endpoints + credential files + path-traversal encodings.
-4. **Challenge High Threat Score Traffic** — managed challenge for high threat scores (kept for API services).
+3. **Block Non-GET Methods on Secret Config Host** — `8cawecg8gu.kkfive.top` only: non-GET/HEAD methods 403, and GET/HEAD paths that don't contain the secret prefix also 403. The secret comes from the `SECRET_PATH_PREFIX` GitHub Secret (placeholder in rules.yaml, injected at CI time).
+4. **Block Malicious Traffic & Exploit Probes** — scanner/monitoring UAs, exploit paths, dead-stack suffixes (.php/.asp/.jsp/...), dangerous HTTP methods, VCS dirs, Vite dev fingerprints, framework debug endpoints, credential files, path-traversal encodings.
+5. **Challenge High Threat Score Traffic** — managed challenge for high threat scores (kept for API services).
 
 To whitelist your own monitoring (or a third-party service): add its egress IPs to `$trusted_infrastructure`, or point a dedicated hostname at the same origin and inline `or (http.host eq "...")` in rule 1's expression.
 
