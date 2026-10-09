@@ -1,6 +1,14 @@
 import requests
-import yaml
 import os
+from ruamel.yaml import YAML
+
+# round-trip 模式：就地更新 ASN expression 時保留 rules.yaml 裡的註解與格式。
+# （舊版用 pyyaml 的 safe_load + dump 會抹掉全部註解並重排格式，第一次 cron 跑完
+#  那些「為什麼這條規則在這裡」的說明就沒了。）
+_yaml = YAML()
+_yaml.preserve_quotes = True
+# 不折行：超長的 expression 維持單行，否則每次 cron 都產生整段重排的 diff 噪音
+_yaml.width = 2**20
 
 ABUSEIPDB_API_KEY = os.getenv("ABUSEIPDB_API_KEY")
 CLOUDFLARE_API_TOKEN = os.getenv("TF_VAR_cloudflare_api_token")
@@ -281,7 +289,7 @@ def update_rules_yaml(asns):
         return
 
     with open(OUTPUT_FILE, 'r') as f:
-        data = yaml.safe_load(f)
+        data = _yaml.load(f)
 
     new_expression = f"(ip.geoip.asnum in {{{' '.join(map(str, asns))}}})"
 
@@ -307,7 +315,7 @@ def update_rules_yaml(asns):
         print(f"➕ Inserted new ASN rule at index {insert_at} with {len(asns)} ASNs")
 
     with open(OUTPUT_FILE, 'w') as f:
-        yaml.dump(data, f, sort_keys=False, allow_unicode=True)
+        _yaml.dump(data, f)
 
 def get_zone_rulesets(zone_id):
     """獲取指定 zone 的所有 ruleset"""
