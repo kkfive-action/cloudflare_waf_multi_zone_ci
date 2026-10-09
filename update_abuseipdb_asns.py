@@ -328,11 +328,20 @@ def inject_secret_path():
 
     秘密值只存在於 GitHub Secrets，rules.yaml 裡永遠是占位符；CI 運行時就地替換。
     未設置 SECRET_PATH_PREFIX 時保留占位符（terraform apply 會報表達式錯誤，提示補 secret）。
+
+    值只允許字母數字與 - _ / .（常見路徑字符）。含引號、空格、反斜槓等 CF 表達式
+    特殊字符會導致 Filter parsing error，這裡提前校驗給出明確報錯。
     """
     if not SECRET_PATH_PREFIX:
         print("⚠️  SECRET_PATH_PREFIX not set — placeholder kept, terraform apply will fail")
         print("   Add it in GitHub Secrets: Settings → Secrets and variables → Actions")
         return
+
+    if not re.fullmatch(r'[A-Za-z0-9\-_.~/]+', SECRET_PATH_PREFIX):
+        print("❌ SECRET_PATH_PREFIX contains unsupported characters")
+        print("   Only letters, digits, and - _ . ~ / are allowed in CF expressions.")
+        print("   Please update the GitHub Secret with a path-safe random string.")
+        raise SystemExit(1)
 
     with open(OUTPUT_FILE, 'r') as f:
         data = _yaml.load(f)
