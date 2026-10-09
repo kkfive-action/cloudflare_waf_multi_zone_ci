@@ -78,7 +78,9 @@ resource "cloudflare_ruleset" "rate_limit" {
       characteristics     = ["ip.src", "cf.colo.id"]
       period              = 10
       requests_per_period = 200
-      mitigation_timeout  = 600
+      # 免費版 mitigation_timeout 只允許 10 秒（API: not entitled to use a
+      # mitigation timeout different from 10）；封禁短但超閾值會反覆觸發
+      mitigation_timeout = 10
     }
   }]
 }
