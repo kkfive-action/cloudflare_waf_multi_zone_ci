@@ -42,11 +42,13 @@ zone_ids = {
 
 Everything lives in `rules.yaml`; top-to-bottom is the priority order. Five rules by default:
 
-1. **Allow Trusted Infrastructure** — allow your own IPs (server / CI / monitoring). **Replace the example IPs with your own first** — otherwise the day your own traffic gets caught by the rules below, you lock yourself out.
+1. **Allow Trusted Infrastructure** — whitelist by the account-level IP list `$trusted_infrastructure` (servers / CI / monitoring egress). **UA is never a trust signal.** Free accounts get exactly one list and it's IP-only — all whitelisted IPs go here. For a dedicated monitoring hostname (e.g. `status.example.com`), inline `or (http.host eq "status.example.com")` in this rule's expression instead (no list needed). The list is an external dependency (not managed by Terraform) — renaming or deleting it breaks the CI apply.
 2. **Block Known Bad ASNs** — bad-ASN blocklist (this rule's expression is rewritten by the script on every run, so editing it by hand is pointless).
-3. **Allow Essential Legitimate Services** — allow Googlebot, UptimeRobot, etc.
-4. **Block Malicious Traffic & Exploit Probes** — block scanner UAs + exploit paths.
+3. **Allow Essential Legitimate Services** — search engines verified by UA **and** ASN (Googlebot: 15169/396982, Bingbot: 8075); social preview bots by UA.
+4. **Block Malicious Traffic & Exploit Probes** — scanner UAs, monitoring-service UAs (UptimeRobot/Pingdom/...), exploit paths, dead-stack suffixes (.php/.asp/.jsp/...), dangerous HTTP methods (TRACE/TRACK/CONNECT).
 5. **Challenge High Threat Score Traffic** — managed challenge for high threat scores.
+
+To whitelist your own monitoring (or a third-party service): add its egress IPs to `$trusted_infrastructure`, or point a dedicated hostname at the same origin and inline `or (http.host eq "...")` in rule 1's expression.
 
 A `skip` rule can take `skip_current_ruleset: true` (skip all remaining custom rules) and `products` (which managed products to skip).
 

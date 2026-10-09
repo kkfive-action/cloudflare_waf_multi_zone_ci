@@ -41,10 +41,12 @@ zone_ids = {
 
 全部在 `rules.yaml`，由上到下就是优先顺序。默认五条：
 
-1. **Allow Trusted Infrastructure** — 放行你自己的 IP（server / CI / 监控）。**先把这条的范例 IP 换成你自己的**，不然哪天自家流量被下面的规则扫到就把自己锁在外面了。
+1. **Allow Trusted Infrastructure** — 白名单走账户级 IP list `$trusted_infrastructure`（server / CI / 监控出口 IP）。**UA 一律不作为信任依据。** 免费账户只有 1 个 list 额度且只能是 IP 类型，所有白名单 IP 都放这里；如需监控专用域名（如 `status.example.com`），直接在这条规则的 expression 内联 `or (http.host eq "status.example.com")`（不占 list 额度）。该 list 是外部依赖（不受 Terraform 管理）——改名或删除会让 CI 的 apply 失败。
 2. **Block Known Bad ASNs** — 坏 ASN 黑名单（这条的 expression 每次跑会被脚本自动重写，手改没用）。
-3. **Allow Essential Legitimate Services** — 放行 Googlebot、UptimeRobot 这类。
-4. **Block Malicious Traffic & Exploit Probes** — 挡扫描工具 UA + 漏洞路径。
+3. **Allow Essential Legitimate Services** — 搜索引擎用 UA + ASN 双重验证（Googlebot: 15169/396982，Bingbot: 8075）；社交预览 bot 按 UA。
+4. **Block Malicious Traffic & Exploit Probes** — 挡扫描工具 UA、监控服务 UA（UptimeRobot/Pingdom 等）、漏洞路径、死技术栈后缀（.php/.asp/.jsp 等）、危险 HTTP 方法（TRACE/TRACK/CONNECT）。
+
+要给自家监控（或第三方服务）开白名单：把它的出口 IP 加进 `$trusted_infrastructure`，或专用域名指向同一源站后在第一条规则的 expression 内联 `or (http.host eq "...")`。
 5. **Challenge High Threat Score Traffic** — 高威胁分数丢 managed challenge。
 
 `skip` 规则可以加 `skip_current_ruleset: true`（跳过后面所有 custom rules）跟 `products`（跳过哪些受管产品）。
@@ -69,4 +71,4 @@ plan 干净再 `terraform apply` 或 merge。
 
 - apply 403 `code 10000`：多半不是 token 坏，是 tfvars 里有 zone **不在这把 token 的账号**底下 → 拿掉那个 zone。
 - token 到底活不活：`curl -s https://api.cloudflare.com/client/v4/user/tokens/verify -H "Authorization: Bearer $TF_VAR_cloudflare_api_token"`
-- 正常服务被挡：把它的 UA 加进第三条 `Allow Essential Legitimate Services`。
+- 正常服务被挡：不要加 UA 白名单（UA 可伪造）——把它的出口 IP 加进 `$trusted_infrastructure`，或在第一条规则内联专用域名。
