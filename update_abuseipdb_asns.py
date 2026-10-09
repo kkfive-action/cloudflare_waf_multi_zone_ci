@@ -277,17 +277,35 @@ def fetch_abuseipdb_asns():
         print("🔄 Falling back to static ASN list")
         return get_known_bad_asns()[:MAX_ASNS]
 
+# 絕對不可封鎖的 ASN：CF 自家（13335）、搜索引擎與社交爬蟲的自營 ASN。
+# 若這些 ASN 被寫進 block 規則，因規則二（合法 bot skip）不跳過 custom rules，
+# 真爬蟲會在 exploit 規則被直接 403——等於主動切斷搜索收錄與社交預覽。
+PROTECTED_ASNS = {
+    13335,   # Cloudflare
+    15169, 396982,  # Google
+    8075,    # Microsoft (Bingbot)
+    32934,   # Meta (facebookexternalhit)
+    13414,   # Twitter/X (Twitterbot)
+    14413,   # LinkedIn (LinkedInBot)
+    714,     # Apple (AppleBot)
+}
+
 def update_rules_yaml(asns):
     """就地更新 ASN 條件，保留規則順序與其他規則不動。
 
     免費版 5 條額度限制下，ASN block 併入「Block Malicious Traffic & Exploit
     Probes」規則的 expression 開頭（同為 block 動作）。本函數優先就地替換該規則
-    裡的 (ip.geoip.asnum in {...}) 條件；找不到該條件才在該規則 expression
+    裡的 (ip.src.asnum in {...}) 條件；找不到該條件才在該規則 expression
     前面補上；連該規則都找不到才走最後備援：插入獨立 ASN 規則。
 
     重要：不可像舊版那樣「移除後 insert(0)」——那會把 ASN 規則插到最前面，
     壓過最高優先的 skip 規則，導致自家流量在 skip 生效前就被 ASN 攔下。
     """
+    blocked = sorted(PROTECTED_ASNS & set(asns))
+    if blocked:
+        print(f"🛡️  Removed protected ASNs from block list: {blocked}")
+        asns = [a for a in asns if a not in PROTECTED_ASNS]
+
     if not asns:
         print("⚠️  No ASN data available, leaving existing ASN condition untouched")
         return
@@ -295,8 +313,8 @@ def update_rules_yaml(asns):
     with open(OUTPUT_FILE, 'r') as f:
         data = _yaml.load(f)
 
-    asn_expr = f"(ip.geoip.asnum in {{{' '.join(map(str, asns))}}})"
-    pattern = re.compile(r"\(ip\.geoip\.asnum in \{[^}]*\}\)")
+    asn_expr = f"(ip.src.asnum in {{{' '.join(map(str, asns))}}})"
+    pattern = re.compile(r"\(ip\.src\.asnum in \{[^}]*\}\)")
 
     # 優先：就地替換 exploit block 規則裡的既有 ASN 條件
     for rule in data["rules"]:
@@ -386,8 +404,15 @@ def get_zone_rulesets(zone_id):
 
 IMPORT_TARGETS_FILE = "import_targets.txt"
 
+# 每個 phase 對應的 terraform 資源地址。zone 的每個 phase 只能有一個 entry-point
+# ruleset，apply 前必須把現有的 import 進 state，否則 terraform 嘗試 create 會衝突。
+IMPORT_PHASES = {
+    "http_request_firewall_custom": "waf_ruleset",
+    "http_ratelimit": "rate_limit",
+}
+
 def emit_import_targets():
-    """探查每個 zone 現有的 http_request_firewall_custom (kind=zone) ruleset id，
+    """探查每個 zone 現有的 entry point ruleset（custom WAF + rate limit 兩個 phase），
     寫出 terraform import 目標到 IMPORT_TARGETS_FILE，供 workflow 在 apply 前把現有
     ruleset import 進當次 state，達成 in-place update（零無防護空窗）。
 
@@ -416,19 +441,20 @@ def emit_import_targets():
     for zone_name, zone_id in ZONE_IDS.items():
         print(f"\n📍 Zone: {zone_name} ({zone_id})")
         rulesets = get_zone_rulesets(zone_id)
-        entry_points = [
-            rs for rs in rulesets
-            if rs.get("phase") == "http_request_firewall_custom" and rs.get("kind") == "zone"
-        ]
-        if not entry_points:
-            print("  ➕ No existing entry-point ruleset — terraform will create it")
-            continue
+        for phase, resource_name in IMPORT_PHASES.items():
+            entry_points = [
+                rs for rs in rulesets
+                if rs.get("phase") == phase and rs.get("kind") == "zone"
+            ]
+            if not entry_points:
+                print(f"  ➕ No existing {phase} ruleset — terraform will create it")
+                continue
 
-        ruleset_id = entry_points[0]["id"]
-        address = f'cloudflare_ruleset.waf_ruleset["{zone_name}"]'
-        import_id = f"zones/{zone_id}/{ruleset_id}"
-        lines.append(f"{address}\t{import_id}")
-        print(f"  📌 Import target: {address}  ->  {import_id}")
+            ruleset_id = entry_points[0]["id"]
+            address = f'cloudflare_ruleset.{resource_name}["{zone_name}"]'
+            import_id = f"zones/{zone_id}/{ruleset_id}"
+            lines.append(f"{address}\t{import_id}")
+            print(f"  📌 Import target: {address}  ->  {import_id}")
 
     with open(IMPORT_TARGETS_FILE, "w") as f:
         f.write("\n".join(lines))

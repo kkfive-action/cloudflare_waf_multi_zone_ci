@@ -23,10 +23,15 @@ rules:
 # 絕不能給這條加 skip_current_ruleset——掃描器會在 GCP 上偽造 Googlebot UA
 # （ASN 也真的是 Google），若連 custom rules 也跳過，/__vite、.env 等攔截全部失效
 # （2026-10 真實事件：34.85.27.89 偽造 Googlebot 探測 /__vite_rsc_findSourceMapURL）。
-# 搜索引擎 UA 必須搭配 ASN 驗證（UA 可零成本偽造）：Googlebot 只認 Google 自家 ASN，
-# Bingbot 只認微軟 ASN 8075。社交預覽 bot 沒有穩定公開 ASN，維持 UA 判斷。
+# 搜索引擎不再用 UA+ASN 自验：GCP/Azure 客戶 VM 與搜索引擎共用 ASN
+# （AS15169/396982 = 全體 GCP 客戶、AS8075 = 全體 Azure 客戶），ASN 條件對
+# 偽造者零門檻——2026-10 事件（34.85.27.89 偽造 Googlebot）正是鑽這個空子。
+# cf.client.bot 由 Cloudflare 用 IP 反向驗證、不可偽造，已涵蓋真 Googlebot/Bingbot。
+# 社交預覽 bot 改配各自營 ASN（不與公有云客戶混用，驗證有效）：Meta 32934、
+# Twitter/X 13414、LinkedIn 14413、Apple 714。Discord 無穩定公開 ASN，維持 UA 判斷
+# （殘留風險：UA 可偽造跳過受管產品，但後面 custom block 仍生效）。
 - action: skip
-  expression: (cf.client.bot) or ((http.user_agent contains "Googlebot") and (ip.src.asnum in {15169 396982})) or ((http.user_agent contains "Bingbot") and (ip.src.asnum eq 8075)) or (http.user_agent contains "facebookexternalhit") or (http.user_agent contains "Twitterbot") or (http.user_agent contains "LinkedInBot") or (http.user_agent contains "Discordbot") or (http.user_agent contains "AppleBot")
+  expression: (cf.client.bot) or ((http.user_agent contains "facebookexternalhit") and (ip.src.asnum eq 32934)) or ((http.user_agent contains "Twitterbot") and (ip.src.asnum eq 13414)) or ((http.user_agent contains "LinkedInBot") and (ip.src.asnum eq 14413)) or ((http.user_agent contains "AppleBot") and (ip.src.asnum eq 714)) or (http.user_agent contains "Discordbot")
   name: Allow Essential Legitimate Services
   products:
   - waf
@@ -45,18 +50,22 @@ rules:
 
 # 第三優先：擋惡意 ASN + 掃描工具 UA + 監控服務 UA + 漏洞路徑 + 死技術棧後綴 + 危險方法。
 # （免費版 5 條額度限制，ASN block 與 exploit block 同為 block 動作，合併為一條；
-#   開頭的 (ip.geoip.asnum in {...}) 條件由 update_abuseipdb_asns.py 每次就地重寫。）
+#   開頭的 (ip.src.asnum in {...}) 條件由 update_abuseipdb_asns.py 每次就地重寫。）
 # 監控服務 UA（UptimeRobot / Pingdom / StatusCake / Site24x7 / GTmetrix / WebPageTest）
 # 全部直接 block——UA 可零成本偽造；自家真要用監控服務時，走上面的 IP / host 白名單。
 # 本棧是 Go / JS/TS，所以 php / asp(x) / jsp / cgi 整族後綴都是死探測，直接 block。
 # （若哪天技術棧變了、真的要用其中某種後綴，記得先從這條拿掉。）
 # VCS 目錄（.git/.svn/.hg）、Vite dev server 指紋（/@fs/、/__vite）、框架調試端點
 # （_profiler、debug/pprof、/console）、密鑰文件（.npmrc、key.pem、service-account.json、
-# gcp-credentials.json）、路徑穿越編碼變體（..%2f、%2e%2e），一併 block。
+# gcp-credentials.json）一併 block。
+# 所有路徑 contains 都包 lower()：contains 大小寫敏感，不歸一的話 /.GIT、/.Env、
+# /WP-LOGIN 直接繞過（與擴展名檢查的 lower() 保持一致；免費版無 matches 正則）。
+# dot-file 檢查去掉前導 /（".env" 本身已涵蓋 "/.env"），省字符且覆蓋更全。
+# 路徑穿越只查解碼後形態 "../"：http.request.uri.path 已被 CF percent-decode，
+# 查 "..%2f"、"%2e%2e" 這種編碼字面量是永遠不命中的死代碼（raw_uri 是付費字段）。
 # query 也檢查 .env：掃描器會把目標藏在 query 參數裡（如 ?filename=file:///app/.env）。
-# raw_uri.path 是付費計劃字段，免費版不支持。
 - action: block
-  expression: (ip.geoip.asnum in {16276 24940 14061 9009}) or (http.user_agent contains "UptimeRobot") or (http.user_agent contains "Pingdom") or (http.user_agent contains "StatusCake") or (http.user_agent contains "Site24x7") or (http.user_agent contains "GTmetrix") or (http.user_agent contains "WebPageTest") or (http.user_agent contains "sqlmap") or (http.user_agent contains "nikto") or (http.user_agent contains "nmap") or (http.user_agent contains "masscan") or (http.user_agent contains "nuclei") or (http.user_agent eq "") or (ends_with(lower(http.request.uri.path), ".php")) or (ends_with(lower(http.request.uri.path), ".phtml")) or (ends_with(lower(http.request.uri.path), ".phar")) or (ends_with(lower(http.request.uri.path), ".asp")) or (ends_with(lower(http.request.uri.path), ".aspx")) or (ends_with(lower(http.request.uri.path), ".jsp")) or (ends_with(lower(http.request.uri.path), ".cgi")) or (http.request.method in {"TRACE" "TRACK" "CONNECT"}) or (http.request.uri.path contains "/.git") or (http.request.uri.path contains "/.svn") or (http.request.uri.path contains "/.hg") or (http.request.uri.path contains "/.env") or (http.request.uri.path contains "/@fs/") or (http.request.uri.path contains "/__vite") or (http.request.uri.path contains "/_profiler") or (http.request.uri.path contains "/debug/pprof") or (http.request.uri.path contains "/console") or (http.request.uri.path contains "/.npmrc") or (http.request.uri.path contains "/key.pem") or (http.request.uri.path contains "service-account.json") or (http.request.uri.path contains "gcp-credentials.json") or (http.request.uri.path contains "..%2f") or (http.request.uri.path contains "%2e%2e") or (http.request.uri.query contains ".env") or (http.request.uri.path contains "/wp-login") or (http.request.uri.path contains "/phpmyadmin") or (http.request.uri.path contains "/.aws") or (http.request.uri.path contains "/.ssh")
+  expression: (ip.src.asnum in {16276 24940 14061 9009}) or (http.user_agent contains "UptimeRobot") or (http.user_agent contains "Pingdom") or (http.user_agent contains "StatusCake") or (http.user_agent contains "Site24x7") or (http.user_agent contains "GTmetrix") or (http.user_agent contains "WebPageTest") or (http.user_agent contains "sqlmap") or (http.user_agent contains "nikto") or (http.user_agent contains "nmap") or (http.user_agent contains "masscan") or (http.user_agent contains "nuclei") or (http.user_agent eq "") or (ends_with(lower(http.request.uri.path), ".php")) or (ends_with(lower(http.request.uri.path), ".phtml")) or (ends_with(lower(http.request.uri.path), ".phar")) or (ends_with(lower(http.request.uri.path), ".asp")) or (ends_with(lower(http.request.uri.path), ".aspx")) or (ends_with(lower(http.request.uri.path), ".jsp")) or (ends_with(lower(http.request.uri.path), ".cgi")) or (http.request.method in {"TRACE" "TRACK" "CONNECT"}) or (lower(http.request.uri.path) contains ".git") or (lower(http.request.uri.path) contains ".svn") or (lower(http.request.uri.path) contains ".hg") or (lower(http.request.uri.path) contains ".env") or (lower(http.request.uri.path) contains "/@fs/") or (lower(http.request.uri.path) contains "/__vite") or (lower(http.request.uri.path) contains "/_profiler") or (lower(http.request.uri.path) contains "/debug/pprof") or (lower(http.request.uri.path) contains "/console") or (lower(http.request.uri.path) contains ".npmrc") or (lower(http.request.uri.path) contains "key.pem") or (lower(http.request.uri.path) contains "service-account.json") or (lower(http.request.uri.path) contains "gcp-credentials.json") or (http.request.uri.path contains "../") or (lower(http.request.uri.query) contains ".env") or (lower(http.request.uri.path) contains "/wp-login") or (lower(http.request.uri.path) contains "/phpmyadmin") or (lower(http.request.uri.path) contains ".aws") or (lower(http.request.uri.path) contains ".ssh")
   name: Block Malicious Traffic & Exploit Probes
 
 # 第四優先（兜底）：高威脅分數的流量丟 managed challenge。
