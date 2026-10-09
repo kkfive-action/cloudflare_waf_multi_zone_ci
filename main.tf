@@ -50,3 +50,33 @@ resource "cloudflare_ruleset" "waf_ruleset" {
     }
   ]
 }
+
+# 每個 zone 一條 rate limit 規則（免費版每 zone 只有 1 條額度，獨立於 custom rules 的 5 條）。
+# 兜底按 IP 計數：200 次/10 秒超出則 block 10 分鐘——正常人瀏覽 10 秒內 <50 次，
+# SPA 首屏突發也碰不到；腳本/掃描器必撞。白名單不走這裡：rules.yaml 前兩條 skip 的
+# products 已含 rateLimit，可信 IP 與合法 bot 天然豁免。
+# 誤傷處理：企業 NAT 出口若被誤攔，先把 action 降為 managed_challenge 觀察。
+resource "cloudflare_ruleset" "rate_limit" {
+  for_each    = var.zone_ids
+  zone_id     = each.value
+  name        = "Rate Limiting"
+  description = "Per-IP flood & brute-force cap"
+  kind        = "zone"
+  phase       = "http_ratelimit"
+
+  rules = [{
+    ref         = "rule_00"
+    description = "Block IPs exceeding 200 req/10s"
+    # 全匹配：Rules 語言沒有裸 true 字面量，path 必以 / 開頭故恒真
+    expression = "(http.request.uri.path contains \"/\")"
+    action     = "block"
+    enabled    = true
+
+    ratelimit = {
+      characteristics     = ["ip.src"]
+      period              = 10
+      requests_per_period = 200
+      mitigation_timeout  = 600
+    }
+  }]
+}
