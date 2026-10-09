@@ -278,34 +278,39 @@ def fetch_abuseipdb_asns():
         return get_known_bad_asns()[:MAX_ASNS]
 
 def update_rules_yaml(asns):
-    """就地更新獨立 ASN 規則的 expression，保留規則順序與其他規則不動。
+    """就地更新 ASN 條件，保留規則順序與其他規則不動。
 
-    兩條 skip 合併騰出額度後，ASN block 恢復為獨立規則「Block Known Bad ASNs
-    (AbuseIPDB)」。本函數按規則名精確匹配就地替換；找不到才在第一個非 skip
-    規則的位置插入新規則。
+    免費版 5 條額度限制下，ASN block 併入「Block Malicious Traffic & Exploit
+    Probes」規則的 expression 開頭（同為 block 動作）。本函數優先就地替換該規則
+    裡的 (ip.geoip.asnum in {...}) 條件；找不到該條件才在該規則 expression
+    前面補上；連該規則都找不到才走最後備援：插入獨立 ASN 規則。
 
     重要：不可像舊版那樣「移除後 insert(0)」——那會把 ASN 規則插到最前面，
     壓過最高優先的 skip 規則，導致自家流量在 skip 生效前就被 ASN 攔下。
     """
     if not asns:
-        print("⚠️  No ASN data available, leaving existing ASN rule untouched")
+        print("⚠️  No ASN data available, leaving existing ASN condition untouched")
         return
 
     with open(OUTPUT_FILE, 'r') as f:
         data = _yaml.load(f)
 
-    new_expression = f"(ip.geoip.asnum in {{{' '.join(map(str, asns))}}})"
+    asn_expr = f"(ip.geoip.asnum in {{{' '.join(map(str, asns))}}})"
+    pattern = re.compile(r"\(ip\.geoip\.asnum in \{[^}]*\}\)")
 
-    asn_rule_found = False
+    # 優先：就地替換 exploit block 規則裡的既有 ASN 條件
     for rule in data["rules"]:
-        if rule.get("name") == "Block Known Bad ASNs (AbuseIPDB)":
-            rule["expression"] = new_expression
-            asn_rule_found = True
-            print(f"✏️  Updated ASN rule expression in place with {len(asns)} ASNs")
+        if rule.get("name") == "Block Malicious Traffic & Exploit Probes":
+            expr = rule.get("expression", "")
+            if pattern.search(expr):
+                rule["expression"] = pattern.sub(asn_expr, expr, count=1)
+                print(f"✏️  Updated ASN condition in place with {len(asns)} ASNs")
+            else:
+                rule["expression"] = f"{asn_expr} or {expr}"
+                print(f"➕ Prepended ASN condition with {len(asns)} ASNs")
             break
-
-    # 找不到既有 ASN 規則才新增（放在第一個非 skip 規則的位置）
-    if not asn_rule_found:
+    else:
+        # 備援：找不到 exploit 規則才插入獨立 ASN 規則（跳過開頭的 skip 規則）
         insert_at = next(
             (i for i, r in enumerate(data["rules"]) if r.get("action") != "skip"),
             len(data["rules"]),
@@ -313,9 +318,9 @@ def update_rules_yaml(asns):
         data["rules"].insert(insert_at, {
             "name": "Block Known Bad ASNs (AbuseIPDB)",
             "action": "block",
-            "expression": new_expression,
+            "expression": asn_expr,
         })
-        print(f"➕ Inserted new ASN rule at index {insert_at} with {len(asns)} ASNs")
+        print(f"➕ Inserted standalone ASN rule at index {insert_at} with {len(asns)} ASNs")
 
     with open(OUTPUT_FILE, 'w') as f:
         _yaml.dump(data, f)

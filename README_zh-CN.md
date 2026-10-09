@@ -42,10 +42,10 @@ zone_ids = {
 
 全部在 `rules.yaml`，由上到下就是优先顺序。默认五条：
 
-1. **Allow Trusted & Legitimate Traffic** — 合并 skip：自家基础设施 IP（账户级 list `$trusted_infrastructure`）+ 合法服务（搜索引擎 UA + ASN 双重验证：Googlebot 15169/396982、Bingbot 8075；社交预览 bot 按 UA）。**UA 单独不作为信任依据。** 免费账户只有 1 个 IP-only list 额度；如需监控专用域名（如 `status.example.com`），直接在这条规则的 expression 内联 `or (http.host eq "status.example.com")`（不占 list 额度）。该 list 是外部依赖（不受 Terraform 管理）——改名或删除会让 CI 的 apply 失败。
-2. **Block Known Bad ASNs** — 坏 ASN 黑名单（expression 每次跑被脚本重写，手改没用）。
+1. **Allow Trusted Infrastructure** — 白名单走账户级 IP list `$trusted_infrastructure`（server / CI / 监控出口 IP），跳过后面所有 custom rules + 受管产品。**UA 一律不作为信任依据。** 免费账户只有 1 个 IP-only list 额度；如需监控专用域名（如 `status.example.com`），直接在这条规则的 expression 内联 `or (http.host eq "status.example.com")`。该 list 是外部依赖（不受 Terraform 管理）——改名或删除会让 CI 的 apply 失败。
+2. **Allow Essential Legitimate Services** — 搜索引擎用 UA + ASN 双重验证（Googlebot: 15169/396982，Bingbot: 8075）；社交预览 bot 按 UA。只跳受管产品（waf/bic/rateLimit）——**后面的 custom block 仍会评估**（扫描器会在 GCP 上伪造 Googlebot UA，绝不能给这条加 skip_current_ruleset）。
 3. **Block Non-GET Methods on Secret Config Host** — 仅 `8cawecg8gu.kkfive.top`：非 GET/HEAD 方法 403；GET/HEAD 但路径不含秘密前缀也 403。秘密值来自 `SECRET_PATH_PREFIX` GitHub Secret（rules.yaml 里是占位符，CI 运行时注入）。
-4. **Block Malicious Traffic & Exploit Probes** — 扫描/监控 UA、漏洞路径、死技术栈后缀（.php/.asp/.jsp 等）、危险 HTTP 方法、VCS 目录、Vite dev 指纹、框架调试端点、密钥文件、路径穿越编码。
+4. **Block Malicious Traffic & Exploit Probes** — 坏 ASN（脚本每次重写）+ 扫描/监控 UA + 漏洞路径 + 死技术栈后缀（.php/.asp/.jsp 等）+ 危险 HTTP 方法 + VCS 目录 + Vite dev 指纹 + 框架调试端点 + 密钥文件 + 路径穿越编码 + query 里的 .env。
 5. **Challenge High Threat Score Traffic** — 高威胁分数丢 managed challenge（为 API 服务保留）。
 
 `skip` 规则可以加 `skip_current_ruleset: true`（跳过后面所有 custom rules）跟 `products`（跳过哪些受管产品）。
