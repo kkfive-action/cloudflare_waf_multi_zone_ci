@@ -1,54 +1,42 @@
-# 可選服務配置 - 根據需要添加到主規則中
-# Optional Services Configuration - Add to main rules as needed
+# 可選服務配置參考 - 白名單請勿再用 UA（UA 可零成本偽造）
+# Optional services reference - do NOT whitelist by UA (trivially spoofable)
 
-# 額外的監控服務 (Additional Monitoring Services)
-monitoring_services:
+# ============================================================
+# 白名單架構（免費帳戶限制：只有 1 個 list 額度，且只能是 IP 類型）
+#   $trusted_infrastructure —— 帳戶級 IP list：所有白名單 IP 都放這裡
+#   專用域名（可選）—— 如 status.example.com，直接在 rules.yaml 第一條的
+#   expression 內聯 or (http.host eq "status.example.com")，不佔 list 額度
+# 要給任何服務開白名單：往 list 加 IP，或內聯一個專用 host。
+# ============================================================
+
+# 已被 rules.yaml 第三條直接 block 的監控服務 UA（自家要用請走上面的白名單）：
+blocked_monitoring_uas:
+  - "UptimeRobot"
+  - "Pingdom"
   - "StatusCake"
-  - "Site24x7" 
+  - "Site24x7"
   - "GTmetrix"
-  - "PageSpeed Insights"
-  - "Lighthouse"
   - "WebPageTest"
-  - "InternetMeasurement"
 
-# 額外的社交媒體平台 (Additional Social Media Platforms)
-social_media:
-  - "TelegramBot"
-  - "SkypeUriPreview"
+# 自家要使用監控服務時的開通方式（擇一）：
+#   A. 出口 IP：把監控服務公開的出口 IP 段加入 $trusted_infrastructure
+#      （UptimeRobot 等會公佈完整 IP 列表，但會變動，需要跟著維護）
+#   B. 專用域名：DNS 加一條記錄（如 status.example.com 指向同一源站），
+#      在 rules.yaml 第一條 skip 的 expression 內聯 or (http.host eq "status.example.com")
 
-# 額外的安全研究服務 (Additional Security Research Services)
-security_research:
-  - "Rapid7"
-  - "Qualys"
-  - "Tenable"
-
-# 額外的 SEO 工具 (Additional SEO Tools)
-seo_tools:
-  - "AhrefsBot"
-  - "SemrushBot"
-  - "MJ12bot"
-  - "DotBot"
-
-# 使用說明 (Usage Instructions)
-# 如果您需要支持這些額外服務，請將相應的用戶代理字符串添加到 rules.yaml 中的
-# "Allow Essential Legitimate Services" 規則的 expression 中
-#
-# 例如，要添加 StatusCake 支持：
-# (http.user_agent contains "StatusCake") or
-#
-# 注意：添加過多服務可能增加安全風險，請只添加您實際需要的服務
+# 仍由第二條 skip 放行的服務（搜索引擎有 ASN 驗證；社交 bot 無穩定 ASN 維持 UA 判斷）：
+still_allowed:
+  search_engines:
+    - "Googlebot (需 ASN 15169/396982)"
+    - "Bingbot (需 ASN 8075)"
+  social_media:
+    - "facebookexternalhit"
+    - "Twitterbot"
+    - "LinkedInBot"
+    - "Discordbot"
+    - "AppleBot"
 
 # 風險評估 (Risk Assessment)
-# 低風險：主要搜索引擎、知名社交媒體平台
-# 中風險：監控服務、性能測試工具
-# 高風險：通用工具（curl、wget 等）- 不建議添加到白名單
-
-# 建議的最小配置 (Recommended Minimal Configuration)
-# 已包含在主規則中：
-# - cf.client.bot (Cloudflare 已知機器人)
-# - Expanse (解決用戶問題)
-# - Shodan, Censys (合法安全掃描)
-# - UptimeRobot, Pingdom (主要監控服務)
-# - 主要搜索引擎 (Google, Bing, Yahoo, DuckDuckGo, Baidu, Yandex)
-# - 主要社交媒體 (Facebook, Twitter, LinkedIn, WhatsApp, Discord)
-# - Apple Bot, Internet Archive
+# 低風險：有 ASN 驗證的搜索引擎
+# 中風險：社交預覽 bot（UA 可偽造，但只能繞過受管產品，後面 custom block 仍生效）
+# 高風險：任何「只靠 UA」的白名單 —— 已在新架構中廢除

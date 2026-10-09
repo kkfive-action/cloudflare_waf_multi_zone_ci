@@ -1,8 +1,11 @@
 rules:
-# 第零優先：放行你自己信任的 IP（最高優先，跳過後面所有 custom rules + 受管產品）。
-# 把下面換成你自己的 server / CI / 監控出口 IP。沒有這條的話，自家流量一旦被下面的
-# ASN / UA 規則掃到就會被擋——這是最常見的「自己把自己鎖在外面」。
-# （203.0.113.x 是 RFC5737 範例網段，記得換掉。）
+# 第零優先：放行你自己信任的基礎設施（最高優先，跳過後面所有 custom rules + 受管產品）。
+# 白名單只認可驗證依據，UA 一律不作為信任依據：
+#   1. $trusted_infrastructure —— 帳戶級 IP list（server / CI / 監控出口 IP）。
+#      免費帳戶只有 1 個 list 額度且只能是 IP 類型，所有白名單 IP 都放這裡。
+#   2. 專用域名（可選）—— 給監控服務開的專用 host（如 status.example.com 指向同一源站），
+#      直接在下面 expression 內聯 or (http.host eq "status.example.com")，不佔 list 額度。
+# 注意：list 是帳戶級資源、不在 Terraform 管理內——改名或刪除會讓 CI 的 apply 失敗。
 - action: skip
   name: Allow Trusted Infrastructure
   expression: (ip.src in $trusted_infrastructure)
@@ -23,17 +26,23 @@ rules:
   expression: (ip.geoip.asnum in {16276 24940 14061 9009})
 
 # 第二優先：放行常見合法服務（只跳過受管產品，後面的 custom block 仍會評估）。
+# 搜索引擎 UA 必須搭配 ASN 驗證（UA 可以零成本偽造）：Googlebot 只認 Google 自家 ASN，
+# Bingbot 只認微軟 ASN 8075。社交預覽 bot 沒有穩定公開 ASN，維持 UA 判斷。
 - action: skip
-  expression: (cf.client.bot) or (http.user_agent contains "Googlebot") or (http.user_agent contains "Bingbot") or (http.user_agent contains "UptimeRobot") or (http.user_agent contains "Pingdom") or (http.user_agent contains "facebookexternalhit") or (http.user_agent contains "Twitterbot") or (http.user_agent contains "LinkedInBot") or (http.user_agent contains "Discordbot") or (http.user_agent contains "AppleBot")
+  expression: (cf.client.bot) or ((http.user_agent contains "Googlebot") and (ip.src.asnum in {15169 396982})) or ((http.user_agent contains "Bingbot") and (ip.src.asnum eq 8075)) or (http.user_agent contains "facebookexternalhit") or (http.user_agent contains "Twitterbot") or (http.user_agent contains "LinkedInBot") or (http.user_agent contains "Discordbot") or (http.user_agent contains "AppleBot")
   name: Allow Essential Legitimate Services
   products:
   - waf
   - bic
   - rateLimit
 
-# 第三優先：擋掃描工具 UA + 常見漏洞路徑探測。依需要增刪。
+# 第三優先：擋掃描工具 UA + 監控服務 UA + 常見漏洞路徑 + 死技術棧後綴 + 危險 HTTP 方法。
+# 監控服務 UA（UptimeRobot / Pingdom / StatusCake / Site24x7 / GTmetrix / WebPageTest）
+# 全部直接 block——UA 可零成本偽造；自家真要用監控服務時，走上面的 IP / host 白名單。
+# 本棧是 Go / JS/TS，所以 php / asp(x) / jsp / cgi 整族後綴都是死探測，直接 block。
+# （若哪天技術棧變了、真的要用其中某種後綴，記得先從這條拿掉。）
 - action: block
-  expression: (http.user_agent contains "sqlmap") or (http.user_agent contains "nikto") or (http.user_agent contains "nmap") or (http.user_agent contains "masscan") or (http.user_agent contains "nuclei") or (http.user_agent eq "") or (http.request.uri.path contains "/.git") or (http.request.uri.path contains "/.env") or (http.request.uri.path contains "/wp-login") or (http.request.uri.path contains "/phpmyadmin") or (http.request.uri.path contains "/.aws") or (http.request.uri.path contains "/.ssh")
+  expression: (http.user_agent contains "UptimeRobot") or (http.user_agent contains "Pingdom") or (http.user_agent contains "StatusCake") or (http.user_agent contains "Site24x7") or (http.user_agent contains "GTmetrix") or (http.user_agent contains "WebPageTest") or (http.user_agent contains "sqlmap") or (http.user_agent contains "nikto") or (http.user_agent contains "nmap") or (http.user_agent contains "masscan") or (http.user_agent contains "nuclei") or (http.user_agent eq "") or (ends_with(lower(http.request.uri.path), ".php")) or (ends_with(lower(http.request.uri.path), ".phtml")) or (ends_with(lower(http.request.uri.path), ".phar")) or (ends_with(lower(http.request.uri.path), ".asp")) or (ends_with(lower(http.request.uri.path), ".aspx")) or (ends_with(lower(http.request.uri.path), ".jsp")) or (ends_with(lower(http.request.uri.path), ".cgi")) or (http.request.method in {"TRACE" "TRACK" "CONNECT"}) or (http.request.uri.path contains "/.git") or (http.request.uri.path contains "/.env") or (http.request.uri.path contains "/wp-login") or (http.request.uri.path contains "/phpmyadmin") or (http.request.uri.path contains "/.aws") or (http.request.uri.path contains "/.ssh")
   name: Block Malicious Traffic & Exploit Probes
 
 # 第四優先（兜底）：高威脅分數的流量丟 managed challenge。
