@@ -1,5 +1,6 @@
 import requests
 import os
+import re
 from ruamel.yaml import YAML
 
 # round-trip 模式：就地更新 ASN expression 時保留 rules.yaml 裡的註解與格式。
@@ -24,7 +25,6 @@ def load_zone_ids_from_tfvars():
             content = f.read()
 
         # 簡單解析 terraform.tfvars 中的 zone_ids
-        import re
 
         # 先剝掉註解（# 之後到行尾），否則被註解掉的 zone 仍會被下面的 regex 撈到，
         # 與 terraform 實際納管的 zone 不一致（terraform 會正確忽略註解）。
@@ -278,11 +278,14 @@ def fetch_abuseipdb_asns():
         return get_known_bad_asns()[:MAX_ASNS]
 
 def update_rules_yaml(asns):
-    """就地更新 ASN block 規則的 expression，保留規則順序與其他規則不動。
+    """就地更新獨立 ASN 規則的 expression，保留規則順序與其他規則不動。
+
+    兩條 skip 合併騰出額度後，ASN block 恢復為獨立規則「Block Known Bad ASNs
+    (AbuseIPDB)」。本函數按規則名精確匹配就地替換；找不到才在第一個非 skip
+    規則的位置插入新規則。
 
     重要：不可像舊版那樣「移除後 insert(0)」——那會把 ASN 規則插到最前面，
-    壓過最高優先的「Allow EZLO Self Infrastructure」skip 規則，導致自家流量
-    在 skip 生效前就被 ASN 規則攔下（會把自家/白名單流量也擋掉）。
+    壓過最高優先的 skip 規則，導致自家流量在 skip 生效前就被 ASN 攔下。
     """
     if not asns:
         print("⚠️  No ASN data available, leaving existing ASN rule untouched")
@@ -295,13 +298,13 @@ def update_rules_yaml(asns):
 
     asn_rule_found = False
     for rule in data["rules"]:
-        if "ASN" in rule.get("name", ""):
+        if rule.get("name") == "Block Known Bad ASNs (AbuseIPDB)":
             rule["expression"] = new_expression
             asn_rule_found = True
             print(f"✏️  Updated ASN rule expression in place with {len(asns)} ASNs")
             break
 
-    # 找不到既有 ASN 規則才新增（放在第一個 block 規則的位置：跳過開頭的 skip 規則）
+    # 找不到既有 ASN 規則才新增（放在第一個非 skip 規則的位置）
     if not asn_rule_found:
         insert_at = next(
             (i for i, r in enumerate(data["rules"]) if r.get("action") != "skip"),
@@ -313,6 +316,36 @@ def update_rules_yaml(asns):
             "expression": new_expression,
         })
         print(f"➕ Inserted new ASN rule at index {insert_at} with {len(asns)} ASNs")
+
+    with open(OUTPUT_FILE, 'w') as f:
+        _yaml.dump(data, f)
+
+
+SECRET_PATH_PREFIX = os.getenv("SECRET_PATH_PREFIX")
+
+def inject_secret_path():
+    """把 8cawecg8gu 專用規則裡的 ${SECRET_PATH_PREFIX} 占位符替換成 GitHub Secret 的值。
+
+    秘密值只存在於 GitHub Secrets，rules.yaml 裡永遠是占位符；CI 運行時就地替換。
+    未設置 SECRET_PATH_PREFIX 時保留占位符（terraform apply 會報表達式錯誤，提示補 secret）。
+    """
+    if not SECRET_PATH_PREFIX:
+        print("⚠️  SECRET_PATH_PREFIX not set — placeholder kept, terraform apply will fail")
+        print("   Add it in GitHub Secrets: Settings → Secrets and variables → Actions")
+        return
+
+    with open(OUTPUT_FILE, 'r') as f:
+        data = _yaml.load(f)
+
+    for rule in data["rules"]:
+        if rule.get("name") == "Block Scanners, Exploit Probes & Secret Host Guard":
+            expr = rule.get("expression", "")
+            if "${SECRET_PATH_PREFIX}" in expr:
+                rule["expression"] = expr.replace("${SECRET_PATH_PREFIX}", SECRET_PATH_PREFIX)
+                print("🔑 Injected SECRET_PATH_PREFIX into secret-host rule")
+            else:
+                print("ℹ️  SECRET_PATH_PREFIX already injected, skipping")
+            break
 
     with open(OUTPUT_FILE, 'w') as f:
         _yaml.dump(data, f)
@@ -439,5 +472,8 @@ if __name__ == "__main__":
     # 更新 rules.yaml
     update_rules_yaml(asns)
     print(f"📝 Updated {OUTPUT_FILE} successfully.")
+
+    # 注入 secret path（GitHub Secret → 8cawecg8gu 專用規則的占位符）
+    inject_secret_path()
 
     print("\n✨ Process completed successfully!")

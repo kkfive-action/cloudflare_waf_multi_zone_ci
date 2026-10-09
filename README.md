@@ -25,8 +25,9 @@ GitHub Actions (daily at 03:00 UTC + on push to main + manual dispatch) runs:
 
 | Name | What it's for |
 |---|---|
-| `CLOUDFLARE_API_TOKEN` | API Token with **Zone : WAF : Edit**. A token can only manage zones in the account it belongs to — don't add zones from another account. Leave Client IP filtering empty, or it'll block the runner. |
+| `CLOUDFLARE_API_TOKEN` | API Token with **Zone : WAF : Edit** + **Zone : Zone : Read** (and Account WAF for the list). A token can only manage zones in the account it belongs to — don't add zones from another account. Leave Client IP filtering empty, or it'll block the runner. |
 | `ABUSEIPDB_API_KEY` | Optional. Without it the script falls back to a built-in static ASN list; everything else still works. |
+| `SECRET_PATH_PREFIX` | The secret path prefix for the `8cawecg8gu` config host. Requests whose path doesn't contain it get 403. **Never commit the value** — it only lives here. |
 
 **3. Edit `terraform.tfvars`** with your own zones (domain = zone id; find the zone id at the bottom-right of the domain's Overview page in the CF dashboard):
 
@@ -40,13 +41,12 @@ zone_ids = {
 
 ## Editing rules
 
-Everything lives in `rules.yaml`; top-to-bottom is the priority order. Five rules by default:
+Everything lives in `rules.yaml`; top-to-bottom is the priority order. Four rules by default (one free-tier slot left spare):
 
-1. **Allow Trusted Infrastructure** — whitelist by the account-level IP list `$trusted_infrastructure` (servers / CI / monitoring egress). **UA is never a trust signal.** Free accounts get exactly one list and it's IP-only — all whitelisted IPs go here. For a dedicated monitoring hostname (e.g. `status.example.com`), inline `or (http.host eq "status.example.com")` in this rule's expression instead (no list needed). The list is an external dependency (not managed by Terraform) — renaming or deleting it breaks the CI apply.
-2. **Block Known Bad ASNs** — bad-ASN blocklist (this rule's expression is rewritten by the script on every run, so editing it by hand is pointless).
-3. **Allow Essential Legitimate Services** — search engines verified by UA **and** ASN (Googlebot: 15169/396982, Bingbot: 8075); social preview bots by UA.
-4. **Block Malicious Traffic & Exploit Probes** — scanner UAs, monitoring-service UAs (UptimeRobot/Pingdom/...), exploit paths, dead-stack suffixes (.php/.asp/.jsp/...), dangerous HTTP methods (TRACE/TRACK/CONNECT).
-5. **Challenge High Threat Score Traffic** — managed challenge for high threat scores.
+1. **Allow Trusted & Legitimate Traffic** — merged skip: your infrastructure IPs (account-level list `$trusted_infrastructure`) + legitimate services (search engines verified by UA **and** ASN: Googlebot 15169/396982, Bingbot 8075; social preview bots by UA). **UA alone is never a trust signal.** Free accounts get exactly one list and it's IP-only. The list is an external dependency (not managed by Terraform) — renaming or deleting it breaks the CI apply.
+2. **Block Known Bad ASNs** — bad-ASN blocklist (expression rewritten by the script on every run, so editing it by hand is pointless).
+3. **Block Scanners, Exploit Probes & Secret Host Guard** — merged anti-scan rule: `8cawecg8gu.kkfive.top` guard (non-GET/HEAD 403; GET/HEAD without the secret path prefix also 403, secret from the `SECRET_PATH_PREFIX` GitHub Secret, placeholder injected at CI time) + scanner/monitoring UAs + exploit paths + dead-stack suffixes (.php/.asp/.jsp/...) + dangerous HTTP methods + VCS dirs + Vite dev fingerprints + framework debug endpoints + credential files + path-traversal encodings.
+4. **Challenge High Threat Score Traffic** — managed challenge for high threat scores (kept for API services).
 
 To whitelist your own monitoring (or a third-party service): add its egress IPs to `$trusted_infrastructure`, or point a dedicated hostname at the same origin and inline `or (http.host eq "...")` in rule 1's expression.
 

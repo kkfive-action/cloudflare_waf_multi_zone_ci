@@ -26,6 +26,7 @@ GitHub Actions（每天 03:00 UTC + push main + 手动）会做这几步：
 |---|---|
 | `CLOUDFLARE_API_TOKEN` | **Zone : WAF : Edit** 权限的 API Token。一把 token 只能管它所属账号的 zone，别放别账号的进来。Client IP filtering 留空，不然会挡到 runner。 |
 | `ABUSEIPDB_API_KEY` | 可选。没设就用内建的静态 ASN 清单，功能照常。 |
+| `SECRET_PATH_PREFIX` | `8cawecg8gu` 配置站的秘密路径前缀。路径不含它的请求直接 403。**值永远不要提交进仓库**——只存在这里。 |
 
 **3. 改 `terraform.tfvars`**，填你自己的 zone（域名 = zone id，dashboard 该网域 Overview 右下角找得到）：
 
@@ -39,15 +40,12 @@ zone_ids = {
 
 ## 改规则
 
-全部在 `rules.yaml`，由上到下就是优先顺序。默认五条：
+全部在 `rules.yaml`，由上到下就是优先顺序。默认四条（免费版 5 条额度还留 1 条备用）：
 
-1. **Allow Trusted Infrastructure** — 白名单走账户级 IP list `$trusted_infrastructure`（server / CI / 监控出口 IP）。**UA 一律不作为信任依据。** 免费账户只有 1 个 list 额度且只能是 IP 类型，所有白名单 IP 都放这里；如需监控专用域名（如 `status.example.com`），直接在这条规则的 expression 内联 `or (http.host eq "status.example.com")`（不占 list 额度）。该 list 是外部依赖（不受 Terraform 管理）——改名或删除会让 CI 的 apply 失败。
-2. **Block Known Bad ASNs** — 坏 ASN 黑名单（这条的 expression 每次跑会被脚本自动重写，手改没用）。
-3. **Allow Essential Legitimate Services** — 搜索引擎用 UA + ASN 双重验证（Googlebot: 15169/396982，Bingbot: 8075）；社交预览 bot 按 UA。
-4. **Block Malicious Traffic & Exploit Probes** — 挡扫描工具 UA、监控服务 UA（UptimeRobot/Pingdom 等）、漏洞路径、死技术栈后缀（.php/.asp/.jsp 等）、危险 HTTP 方法（TRACE/TRACK/CONNECT）。
-
-要给自家监控（或第三方服务）开白名单：把它的出口 IP 加进 `$trusted_infrastructure`，或专用域名指向同一源站后在第一条规则的 expression 内联 `or (http.host eq "...")`。
-5. **Challenge High Threat Score Traffic** — 高威胁分数丢 managed challenge。
+1. **Allow Trusted & Legitimate Traffic** — 合并 skip：自家基础设施 IP（账户级 list `$trusted_infrastructure`）+ 合法服务（搜索引擎 UA + ASN 双重验证：Googlebot 15169/396982、Bingbot 8075；社交预览 bot 按 UA）。**UA 单独不作为信任依据。** 免费账户只有 1 个 IP-only list 额度；如需监控专用域名（如 `status.example.com`），直接在这条规则的 expression 内联 `or (http.host eq "status.example.com")`（不占 list 额度）。该 list 是外部依赖（不受 Terraform 管理）——改名或删除会让 CI 的 apply 失败。
+2. **Block Known Bad ASNs** — 坏 ASN 黑名单（expression 每次跑被脚本重写，手改没用）。
+3. **Block Scanners, Exploit Probes & Secret Host Guard** — 防扫描合并规则：`8cawecg8gu.kkfive.top` 防护（非 GET/HEAD 403；GET/HEAD 但路径不含秘密前缀也 403，秘密值来自 `SECRET_PATH_PREFIX` GitHub Secret，CI 运行时注入占位符）+ 扫描/监控 UA + 漏洞路径 + 死技术栈后缀（.php/.asp/.jsp 等）+ 危险 HTTP 方法 + VCS 目录 + Vite dev 指纹 + 框架调试端点 + 密钥文件 + 路径穿越编码。
+4. **Challenge High Threat Score Traffic** — 高威胁分数丢 managed challenge（为 API 服务保留）。
 
 `skip` 规则可以加 `skip_current_ruleset: true`（跳过后面所有 custom rules）跟 `products`（跳过哪些受管产品）。
 

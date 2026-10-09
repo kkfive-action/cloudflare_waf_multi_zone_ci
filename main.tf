@@ -16,7 +16,7 @@ locals {
 }
 
 # 每個 zone 一個 http_request_firewall_custom 階段的 entry point ruleset（kind = "zone"）。
-# 規則內容來自 rules.yaml；ASN block 那條由 update_abuseipdb_asns.py 就地更新。
+# 規則內容來自 rules.yaml；獨立 ASN 規則的 expression 由 update_abuseipdb_asns.py 就地更新。
 #
 # v5 重點：rules 是 list attribute（不是 v4 的 dynamic block）；action_parameters / logging
 # 是 object（= {...}）而非 block。skip 規則才帶 action_parameters，其餘設 null。

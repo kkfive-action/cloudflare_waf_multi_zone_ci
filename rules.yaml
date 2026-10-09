@@ -1,14 +1,15 @@
 rules:
-# 第零優先：放行你自己信任的基礎設施（最高優先，跳過後面所有 custom rules + 受管產品）。
-# 白名單只認可驗證依據，UA 一律不作為信任依據：
+# 第零優先：放行（最高優先，跳過後面所有 custom rules + 受管產品）。
+# 兩類可信來源合併為一條 skip（products 取寬的 6 個，對合法服務無害）：
 #   1. $trusted_infrastructure —— 帳戶級 IP list（server / CI / 監控出口 IP）。
 #      免費帳戶只有 1 個 list 額度且只能是 IP 類型，所有白名單 IP 都放這裡。
-#   2. 專用域名（可選）—— 給監控服務開的專用 host（如 status.example.com 指向同一源站），
-#      直接在下面 expression 內聯 or (http.host eq "status.example.com")，不佔 list 額度。
+#      專用域名（可選）直接在 expression 內聯 or (http.host eq "status.example.com")。
+#   2. 合法服務 —— 搜索引擎 UA + ASN 雙重驗證（Googlebot: 15169/396982，
+#      Bingbot: 8075）；社交預覽 bot 無穩定 ASN，維持 UA 判斷。
 # 注意：list 是帳戶級資源、不在 Terraform 管理內——改名或刪除會讓 CI 的 apply 失敗。
 - action: skip
-  name: Allow Trusted Infrastructure
-  expression: (ip.src in $trusted_infrastructure)
+  name: Allow Trusted & Legitimate Traffic
+  expression: (ip.src in $trusted_infrastructure) or (cf.client.bot) or ((http.user_agent contains "Googlebot") and (ip.src.asnum in {15169 396982})) or ((http.user_agent contains "Bingbot") and (ip.src.asnum eq 8075)) or (http.user_agent contains "facebookexternalhit") or (http.user_agent contains "Twitterbot") or (http.user_agent contains "LinkedInBot") or (http.user_agent contains "Discordbot") or (http.user_agent contains "AppleBot")
   skip_current_ruleset: true
   products:
   - waf
@@ -25,25 +26,23 @@ rules:
   name: Block Known Bad ASNs (AbuseIPDB)
   expression: (ip.geoip.asnum in {16276 24940 14061 9009})
 
-# 第二優先：放行常見合法服務（只跳過受管產品，後面的 custom block 仍會評估）。
-# 搜索引擎 UA 必須搭配 ASN 驗證（UA 可以零成本偽造）：Googlebot 只認 Google 自家 ASN，
-# Bingbot 只認微軟 ASN 8075。社交預覽 bot 沒有穩定公開 ASN，維持 UA 判斷。
-- action: skip
-  expression: (cf.client.bot) or ((http.user_agent contains "Googlebot") and (ip.src.asnum in {15169 396982})) or ((http.user_agent contains "Bingbot") and (ip.src.asnum eq 8075)) or (http.user_agent contains "facebookexternalhit") or (http.user_agent contains "Twitterbot") or (http.user_agent contains "LinkedInBot") or (http.user_agent contains "Discordbot") or (http.user_agent contains "AppleBot")
-  name: Allow Essential Legitimate Services
-  products:
-  - waf
-  - bic
-  - rateLimit
-
-# 第三優先：擋掃描工具 UA + 監控服務 UA + 常見漏洞路徑 + 死技術棧後綴 + 危險 HTTP 方法。
-# 監控服務 UA（UptimeRobot / Pingdom / StatusCake / Site24x7 / GTmetrix / WebPageTest）
-# 全部直接 block——UA 可零成本偽造；自家真要用監控服務時，走上面的 IP / host 白名單。
-# 本棧是 Go / JS/TS，所以 php / asp(x) / jsp / cgi 整族後綴都是死探測，直接 block。
-# （若哪天技術棧變了、真的要用其中某種後綴，記得先從這條拿掉。）
+# 第二優先：防掃描合併規則——8cawecg8gu 雙因子防護 + 掃描/監控 UA + 漏洞路徑 +
+# 死技術棧後綴 + 危險方法（本質都是防掃描，合併為一條騰出額度）。
+#
+# 8cawecg8gu 專用部分：① 非 GET/HEAD 方法 403；② GET/HEAD 但路徑不含秘密前綴也 403。
+# 秘密前綴走 GitHub Secret（SECRET_PATH_PREFIX），rules.yaml 裡只是占位符；
+# CI 運行時就地替換，倉庫裡永遠看不到明文。隨機子域名 + 不可見路徑秘密，雙保險。
+#
+# 通用部分：監控服務 UA（UptimeRobot / Pingdom / StatusCake / Site24x7 / GTmetrix /
+# WebPageTest）全部直接 block——UA 可零成本偽造；自家真要用監控服務時走上面的白名單。
+# 本棧是 Go / JS/TS，php / asp(x) / jsp / cgi 整族後綴都是死探測，直接 block。
+# VCS 目錄（.git/.svn/.hg）、Vite dev server 指紋（/@fs/、/__vite）、框架調試端點
+# （_profiler、debug/pprof、/console）、密鑰文件（.npmrc、key.pem、service-account.json、
+# gcp-credentials.json）、路徑穿越編碼變體，一併 block。
+# raw_uri.path 雙檢 /.env 與 ../：攻擊者常用 %2F、%2E 編碼混淆繞過規範化後的 path 匹配。
 - action: block
-  expression: (http.user_agent contains "UptimeRobot") or (http.user_agent contains "Pingdom") or (http.user_agent contains "StatusCake") or (http.user_agent contains "Site24x7") or (http.user_agent contains "GTmetrix") or (http.user_agent contains "WebPageTest") or (http.user_agent contains "sqlmap") or (http.user_agent contains "nikto") or (http.user_agent contains "nmap") or (http.user_agent contains "masscan") or (http.user_agent contains "nuclei") or (http.user_agent eq "") or (ends_with(lower(http.request.uri.path), ".php")) or (ends_with(lower(http.request.uri.path), ".phtml")) or (ends_with(lower(http.request.uri.path), ".phar")) or (ends_with(lower(http.request.uri.path), ".asp")) or (ends_with(lower(http.request.uri.path), ".aspx")) or (ends_with(lower(http.request.uri.path), ".jsp")) or (ends_with(lower(http.request.uri.path), ".cgi")) or (http.request.method in {"TRACE" "TRACK" "CONNECT"}) or (http.request.uri.path contains "/.git") or (http.request.uri.path contains "/.env") or (http.request.uri.path contains "/wp-login") or (http.request.uri.path contains "/phpmyadmin") or (http.request.uri.path contains "/.aws") or (http.request.uri.path contains "/.ssh")
-  name: Block Malicious Traffic & Exploit Probes
+  expression: ((http.host eq "8cawecg8gu.kkfive.top") and (not (http.request.method in {"GET" "HEAD"}) or not (http.request.uri.path contains "${SECRET_PATH_PREFIX}"))) or (http.user_agent contains "UptimeRobot") or (http.user_agent contains "Pingdom") or (http.user_agent contains "StatusCake") or (http.user_agent contains "Site24x7") or (http.user_agent contains "GTmetrix") or (http.user_agent contains "WebPageTest") or (http.user_agent contains "sqlmap") or (http.user_agent contains "nikto") or (http.user_agent contains "nmap") or (http.user_agent contains "masscan") or (http.user_agent contains "nuclei") or (http.user_agent eq "") or (ends_with(lower(http.request.uri.path), ".php")) or (ends_with(lower(http.request.uri.path), ".phtml")) or (ends_with(lower(http.request.uri.path), ".phar")) or (ends_with(lower(http.request.uri.path), ".asp")) or (ends_with(lower(http.request.uri.path), ".aspx")) or (ends_with(lower(http.request.uri.path), ".jsp")) or (ends_with(lower(http.request.uri.path), ".cgi")) or (http.request.method in {"TRACE" "TRACK" "CONNECT"}) or (http.request.uri.path contains "/.git") or (http.request.uri.path contains "/.svn") or (http.request.uri.path contains "/.hg") or (http.request.uri.path contains "/.env") or (http.request.uri.path contains "/@fs/") or (http.request.uri.path contains "/__vite") or (http.request.uri.path contains "/_profiler") or (http.request.uri.path contains "/debug/pprof") or (http.request.uri.path contains "/console") or (http.request.uri.path contains "/.npmrc") or (http.request.uri.path contains "/key.pem") or (http.request.uri.path contains "service-account.json") or (http.request.uri.path contains "gcp-credentials.json") or (http.request.uri.path contains "..%2f") or (http.request.uri.path contains "%2e%2e") or (http.request.raw_uri.path contains "/.env") or (http.request.raw_uri.path contains "../") or (http.request.uri.path contains "/wp-login") or (http.request.uri.path contains "/phpmyadmin") or (http.request.uri.path contains "/.aws") or (http.request.uri.path contains "/.ssh")
+  name: Block Scanners, Exploit Probes & Secret Host Guard
 
 # 第四優先（兜底）：高威脅分數的流量丟 managed challenge。
 # 注意：別用「挑戰所有海外流量」那種寫法——對 SPA + API 的站，managed challenge 會卡死

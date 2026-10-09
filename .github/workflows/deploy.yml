@@ -19,6 +19,7 @@ jobs:
     env:
       ABUSEIPDB_API_KEY: ${{ secrets.ABUSEIPDB_API_KEY }}
       TF_VAR_cloudflare_api_token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      SECRET_PATH_PREFIX: ${{ secrets.SECRET_PATH_PREFIX }}
 
     steps:
     - name: Checkout Code
